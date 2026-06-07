@@ -23,6 +23,7 @@ for (const tab of tabs) {
 }
 
 async function render() {
+  await chrome.runtime.sendMessage({ type: "MOOC_CLEANUP_TASKS" }).catch(() => {});
   const { tasks = [] } = await chrome.storage.local.get("tasks");
   cachedTasks = tasks;
   renderTasks(tasks);
@@ -31,7 +32,7 @@ async function render() {
 function renderTasks(tasks) {
   taskList.innerHTML = "";
 
-  const activeTasks = tasks.filter((task) => !task.done);
+  const activeTasks = tasks.filter((task) => !task.done && !isSilencedTask(task));
   const displayableTasks = activeTasks.filter(isDisplayableTask);
   const dayTasks = displayableTasks.filter((task) => getPriority(task) === "day" || getPriority(task) === "overdue");
   const weekTasks = displayableTasks.filter((task) => ["day", "week", "overdue"].includes(getPriority(task)));
@@ -135,6 +136,7 @@ function getPriority(task) {
   if (!task.dueAt) return "unknown";
 
   const diff = task.dueAt - Date.now();
+  if (diff < -7 * 24 * 60 * 60 * 1000) return "silent";
   if (diff < 0) return "overdue";
   if (diff <= 24 * 60 * 60 * 1000) return "day";
   if (diff <= 7 * 24 * 60 * 60 * 1000) return "week";
@@ -144,6 +146,7 @@ function getPriority(task) {
 
 function priorityLabel(task) {
   const priority = getPriority(task);
+  if (priority === "silent") return "已沉默";
   if (priority === "overdue") return "已截止";
   if (priority === "day") return "1天";
   if (priority === "week") return "1周";
@@ -152,10 +155,14 @@ function priorityLabel(task) {
 }
 
 function isDisplayableTask(task) {
-  if (!task?.title || task.done) return false;
+  if (!task?.title || task.done || isSilencedTask(task)) return false;
   if (!isValidTaskTitle(task.title)) return false;
   if (/(已结课|课程已结束|已结束课程|课程结束|已关闭|已归档)/.test(`${task.course || ""} ${task.capturedText || ""}`)) return false;
   return Boolean(task.dueAt);
+}
+
+function isSilencedTask(task) {
+  return Boolean(task?.dueAt && Date.now() - Number(task.dueAt) > 7 * 24 * 60 * 60 * 1000);
 }
 
 function isValidTaskTitle(title) {
