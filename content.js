@@ -15,6 +15,7 @@ const TASK_KEYWORDS = [
 
 const DONE_KEYWORDS = ["已完成", "已提交", "已交", "完成学习", "得分", "已评分"];
 const MAX_TEXT_LENGTH = 180;
+const MAX_LINKED_COURSES = 20;
 
 let scanTimer = null;
 
@@ -23,9 +24,7 @@ observePageChanges();
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === "MOOC_SCAN_NOW") {
-    const tasks = collectTasks();
-    chrome.runtime.sendMessage({ type: "MOOC_TASKS_FOUND", tasks });
-    sendResponse({ ok: true, count: tasks.length });
+    scanPage().then((tasks) => sendResponse({ ok: true, count: tasks.length }));
     return true;
   }
 
@@ -45,15 +44,22 @@ function scanSoon() {
   scanTimer = setTimeout(scanPage, 800);
 }
 
-function scanPage() {
-  const tasks = collectTasks();
+async function scanPage() {
+  const tasks = await collectTasks();
   chrome.runtime.sendMessage({
     type: "MOOC_TASKS_FOUND",
     tasks
   });
+  return tasks;
 }
 
-function collectTasks() {
+async function collectTasks() {
+  const ownTasks = collectTasksFromRoot(document, location.href, extractCourseName(document));
+  const linkedTasks = await collectTasksFromLinkedCourses();
+  return mergeTasks([...ownTasks, ...linkedTasks]).slice(0, 160);
+}
+
+function collectTasksFromRoot(root, baseUrl, fallbackCourse) {
   const candidates = new Map();
   const selectors = [
     "a",
@@ -68,8 +74,8 @@ function collectTasks() {
     "[title]"
   ];
 
-  for (const element of document.querySelectorAll(selectors.join(","))) {
-    if (!isVisible(element)) continue;
+  for (const element of root.querySelectorAll(selectors.join(","))) {
+    if (root === document && !isVisible(element)) continue;
 
     const container = closestMeaningfulContainer(element);
     const text = normalizeText(container.innerText || element.innerText || element.textContent || "");
@@ -81,8 +87,8 @@ function collectTasks() {
     const dueAt = extractDueAt(text);
     const status = getStatus(text);
     const link = container.querySelector("a[href]") || element.closest("a[href]") || element.querySelector?.("a[href]");
-    const pageUrl = link ? new URL(link.getAttribute("href"), location.href).href : location.href;
-    const course = extractCourseName();
+    const pageUrl = link ? new URL(link.getAttribute("href"), baseUrl).href : baseUrl;
+    const course = extractCourseName(root) || fallbackCourse || "中国大学 MOOC";
     const id = makeTaskId(title, course, dueAt, pageUrl);
 
     candidates.set(id, {
@@ -102,6 +108,96 @@ function collectTasks() {
   return Array.from(candidates.values())
     .filter((task) => task.status !== "done" || task.dueAt)
     .slice(0, 80);
+}
+
+async function collectTasksFromLinkedCourses() {
+  const courseLinks = findCourseLinks();
+  if (courseLinks.length === 0) return [];
+
+  const allTasks = [];
+  for (const course of courseLinks.slice(0, MAX_LINKED_COURSES)) {
+    const html = await fetchCourseHtml(course.url);
+    if (!html) continue;
+
+    const page = new DOMParser().parseFromString(html, "text/html");
+    const courseName = extractCourseName(page) || course.title;
+    allTasks.push(...collectTasksFromRoot(page, course.url, courseName));
+
+    const subPages = findTaskPageLinks(page, course.url).slice(0, 6);
+    for (const subPageUrl of subPages) {
+      const subHtml = await fetchCourseHtml(subPageUrl);
+      if (!subHtml) continue;
+      const subPage = new DOMParser().parseFromString(subHtml, "text/html");
+      allTasks.push(...collectTasksFromRoot(subPage, subPageUrl, courseName));
+    }
+  }
+
+  return mergeTasks(allTasks);
+}
+
+function findCourseLinks() {
+  const links = [];
+  const seen = new Set();
+
+  for (const anchor of document.querySelectorAll("a[href]")) {
+    const href = anchor.getAttribute("href");
+    if (!href) continue;
+
+    const url = new URL(href, location.href);
+    if (!isMoocUrl(url) || !looksLikeCourseUrl(url.href)) continue;
+
+    const container = anchor.closest("li, [class*='course'], [class*='card'], [class*='item']") || anchor;
+    const title = normalizeText(
+      anchor.getAttribute("title") ||
+        container.querySelector("[title]")?.getAttribute("title") ||
+        anchor.innerText ||
+        container.innerText ||
+        ""
+    )
+      .split(/进行中|已结束|开课|学习|进入/)[0]
+      .slice(0, 80)
+      .trim();
+
+    const normalizedUrl = url.href.split("#")[0];
+    if (!title || seen.has(normalizedUrl)) continue;
+
+    seen.add(normalizedUrl);
+    links.push({ url: normalizedUrl, title });
+  }
+
+  return links;
+}
+
+function findTaskPageLinks(root, baseUrl) {
+  const urls = [];
+  const seen = new Set();
+
+  for (const anchor of root.querySelectorAll("a[href]")) {
+    const text = normalizeText(anchor.innerText || anchor.textContent || anchor.getAttribute("title") || "");
+    const url = new URL(anchor.getAttribute("href"), baseUrl);
+    if (!isMoocUrl(url)) continue;
+    if (!/(作业|测验|测试|考试|讨论|问卷|任务|学习)/.test(text + url.href)) continue;
+
+    const normalizedUrl = url.href.split("#")[0];
+    if (seen.has(normalizedUrl)) continue;
+
+    seen.add(normalizedUrl);
+    urls.push(normalizedUrl);
+  }
+
+  return urls;
+}
+
+async function fetchCourseHtml(url) {
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: "MOOC_FETCH_HTML",
+      url
+    });
+    return response?.html || "";
+  } catch (_error) {
+    return "";
+  }
 }
 
 function closestMeaningfulContainer(element) {
@@ -129,7 +225,7 @@ function extractTitle(container, text) {
     .trim();
 }
 
-function extractCourseName() {
+function extractCourseName(root = document) {
   const selectors = [
     ".course-title",
     "[class*='courseName']",
@@ -139,11 +235,12 @@ function extractCourseName() {
   ];
 
   for (const selector of selectors) {
-    const text = normalizeText(document.querySelector(selector)?.innerText || "");
+    const element = root.querySelector(selector);
+    const text = normalizeText(element?.innerText || element?.textContent || "");
     if (text && text.length < 80) return text;
   }
 
-  return normalizeText(document.title)
+  return normalizeText(root.title || document.title)
     .replace(/中国大学MOOC|中国大学 MOOC|慕课/gi, "")
     .replace(/[-_|]/g, " ")
     .trim();
@@ -197,6 +294,22 @@ function inferTaskType(text) {
 
 function makeTaskId(title, course, dueAt, pageUrl) {
   return simpleHash([course, title, dueAt || "", pageUrl.split("#")[0]].join("|"));
+}
+
+function mergeTasks(tasks) {
+  const byId = new Map();
+  for (const task of tasks) {
+    byId.set(task.id, { ...byId.get(task.id), ...task });
+  }
+  return Array.from(byId.values());
+}
+
+function looksLikeCourseUrl(url) {
+  return /\/course\/|\/learn\/|\/spoc\/|\/term\/|courseId=|tid=/.test(url);
+}
+
+function isMoocUrl(url) {
+  return /(^|\.)icourse163\.org$|(^|\.)universitymooc\.com$/.test(url.hostname);
 }
 
 function simpleHash(input) {

@@ -31,6 +31,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message?.type === "MOOC_FETCH_HTML") {
+    fetchHtml(message.url).then((html) => sendResponse({ ok: Boolean(html), html }));
+    return true;
+  }
+
   return false;
 });
 
@@ -118,4 +123,23 @@ function formatDateTime(timestamp) {
     hour: "2-digit",
     minute: "2-digit"
   }).format(new Date(timestamp));
+}
+
+async function fetchHtml(url) {
+  try {
+    const parsed = new URL(url);
+    if (!/(^|\.)icourse163\.org$|(^|\.)universitymooc\.com$/.test(parsed.hostname)) {
+      return "";
+    }
+
+    const response = await fetch(parsed.href, {
+      credentials: "include",
+      cache: "no-store"
+    });
+    const contentType = response.headers.get("content-type") || "";
+    if (!response.ok || !contentType.includes("text/html")) return "";
+    return await response.text();
+  } catch (_error) {
+    return "";
+  }
 }

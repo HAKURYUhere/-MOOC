@@ -38,7 +38,7 @@ function renderTasks(tasks) {
   summary.textContent = `${activeTasks.length} 个待完成，${soonTasks.length} 个 24 小时内截止`;
 
   if (filtered.length === 0) {
-    taskList.innerHTML = `<div class="empty">没有匹配的任务。打开中国大学 MOOC 课程页后点右上角刷新试试。</div>`;
+    taskList.innerHTML = `<div class="empty">没有匹配的任务。登录后打开中国大学 MOOC 首页或“我的课程”页，再点右上角刷新试试。</div>`;
     return;
   }
 
