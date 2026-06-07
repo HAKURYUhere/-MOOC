@@ -1,0 +1,259 @@
+:root {
+  color-scheme: light;
+  --bg: #f7f8fb;
+  --panel: #ffffff;
+  --text: #172033;
+  --muted: #647084;
+  --line: #dce1ea;
+  --brand: #1967d2;
+  --brand-strong: #1557b0;
+  --danger: #b3261e;
+  --danger-bg: #fff0ee;
+  --ok: #137333;
+  --ok-bg: #e7f4eb;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 360px;
+  max-width: 420px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+.popup {
+  padding: 14px;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+h1 {
+  margin: 0;
+  font-size: 20px;
+  line-height: 1.25;
+}
+
+.topbar p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.icon-button {
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--brand);
+  cursor: pointer;
+}
+
+.tabs {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.tab {
+  min-height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.tab.active {
+  border-color: var(--brand);
+  background: #eaf2ff;
+  color: var(--brand);
+  font-weight: 700;
+}
+
+.task-list {
+  display: grid;
+  gap: 8px;
+  max-height: 440px;
+  overflow: auto;
+}
+
+.task {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.task.overdue {
+  border-color: #efb3ae;
+  background: var(--danger-bg);
+}
+
+.task.done {
+  opacity: 0.64;
+}
+
+.task-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 7px;
+}
+
+.pill {
+  display: inline-flex;
+  min-height: 22px;
+  align-items: center;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: #eef2f7;
+  color: #394457;
+  font-size: 12px;
+}
+
+.due {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.overdue .due {
+  color: var(--danger);
+  font-weight: 700;
+}
+
+.task h2 {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.course {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.task-actions {
+  display: grid;
+  align-content: center;
+  gap: 6px;
+}
+
+.task-actions button,
+.text-button,
+.primary-button {
+  min-height: 30px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.task-actions button {
+  min-width: 54px;
+  padding: 0 9px;
+}
+
+.open-task {
+  border-color: var(--brand) !important;
+  color: var(--brand) !important;
+}
+
+.footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.text-button {
+  padding: 0 10px;
+  color: var(--brand);
+}
+
+.empty {
+  padding: 18px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.options-body {
+  min-width: 0;
+  max-width: none;
+}
+
+.options {
+  width: min(520px, calc(100vw - 32px));
+  margin: 32px auto;
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.field,
+.switch {
+  display: grid;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.field input {
+  width: 180px;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.field small,
+.save-state {
+  color: var(--muted);
+}
+
+.switch {
+  grid-template-columns: auto 1fr;
+  align-items: center;
+}
+
+.primary-button {
+  margin-top: 20px;
+  padding: 0 16px;
+  background: var(--brand);
+  border-color: var(--brand);
+  color: #fff;
+}
+
+.primary-button:hover {
+  background: var(--brand-strong);
+}

@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>MOOC 待办提醒设置</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body class="options-body">
+    <main class="options">
+      <h1>提醒设置</h1>
+      <label class="field">
+        <span>截止前提醒时间</span>
+        <input id="reminderHours" type="number" min="1" max="168" step="1">
+        <small>单位：小时</small>
+      </label>
+      <label class="field">
+        <span>后台检查间隔</span>
+        <input id="scanIntervalMinutes" type="number" min="5" max="360" step="5">
+        <small>单位：分钟</small>
+      </label>
+      <label class="switch">
+        <input id="notifyEnabled" type="checkbox">
+        <span>开启系统通知</span>
+      </label>
+      <button id="saveSettings" class="primary-button">保存设置</button>
+      <p id="saveState" class="save-state"></p>
+    </main>
+    <script src="options.js"></script>
+  </body>
+</html>

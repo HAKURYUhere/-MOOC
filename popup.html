@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>MOOC 待办提醒</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <main class="popup">
+      <header class="topbar">
+        <div>
+          <h1>MOOC 待办</h1>
+          <p id="summary">正在读取任务</p>
+        </div>
+        <button id="scanCurrent" class="icon-button" title="扫描当前页面">↻</button>
+      </header>
+
+      <nav class="tabs" aria-label="筛选任务">
+        <button class="tab active" data-filter="active">待完成</button>
+        <button class="tab" data-filter="soon">临近截止</button>
+        <button class="tab" data-filter="all">全部</button>
+      </nav>
+
+      <section id="taskList" class="task-list" aria-live="polite"></section>
+
+      <footer class="footer">
+        <button id="openOptions" class="text-button">提醒设置</button>
+        <button id="clearDone" class="text-button">清理已完成</button>
+      </footer>
+    </main>
+
+    <template id="taskTemplate">
+      <article class="task">
+        <div class="task-main">
+          <div class="task-row">
+            <span class="pill"></span>
+            <span class="due"></span>
+          </div>
+          <h2></h2>
+          <p class="course"></p>
+        </div>
+        <div class="task-actions">
+          <button class="open-task" title="打开任务">打开</button>
+          <button class="toggle-done" title="标记完成">完成</button>
+        </div>
+      </article>
+    </template>
+
+    <script src="popup.js"></script>
+  </body>
+</html>
