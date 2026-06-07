@@ -16,6 +16,7 @@ const TASK_KEYWORDS = [
 const DONE_KEYWORDS = ["已完成", "已提交", "已交", "完成学习", "得分", "已评分"];
 const MAX_TEXT_LENGTH = 180;
 const MAX_LINKED_COURSES = 20;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 let scanTimer = null;
 
@@ -86,6 +87,8 @@ function collectTasksFromRoot(root, baseUrl, fallbackCourse) {
 
     const dueAt = extractDueAt(text);
     const status = getStatus(text);
+    if (!isAccurateTaskCandidate(text, title, dueAt, status)) continue;
+
     const link = container.querySelector("a[href]") || element.closest("a[href]") || element.querySelector?.("a[href]");
     const pageUrl = link ? new URL(link.getAttribute("href"), baseUrl).href : baseUrl;
     const course = extractCourseName(root) || fallbackCourse || "中国大学 MOOC";
@@ -99,6 +102,7 @@ function collectTasksFromRoot(root, baseUrl, fallbackCourse) {
       status,
       done: status === "done",
       dueAt,
+      priority: getPriority(dueAt, status),
       pageUrl,
       capturedText: text.slice(0, MAX_TEXT_LENGTH),
       foundAt: Date.now()
@@ -123,7 +127,7 @@ async function collectTasksFromLinkedCourses() {
     const courseName = extractCourseName(page) || course.title;
     allTasks.push(...collectTasksFromRoot(page, course.url, courseName));
 
-    const subPages = findTaskPageLinks(page, course.url).slice(0, 6);
+    const subPages = findTaskPageLinks(page, course.url).slice(0, 8);
     for (const subPageUrl of subPages) {
       const subHtml = await fetchCourseHtml(subPageUrl);
       if (!subHtml) continue;
@@ -176,7 +180,7 @@ function findTaskPageLinks(root, baseUrl) {
     const text = normalizeText(anchor.innerText || anchor.textContent || anchor.getAttribute("title") || "");
     const url = new URL(anchor.getAttribute("href"), baseUrl);
     if (!isMoocUrl(url)) continue;
-    if (!/(作业|测验|测试|考试|讨论|问卷|任务|学习)/.test(text + url.href)) continue;
+    if (!/(作业|测验|测试|考试|讨论|问卷|任务|homework|quiz|exam|test|forum|task)/i.test(text + url.href)) continue;
 
     const normalizedUrl = url.href.split("#")[0];
     if (seen.has(normalizedUrl)) continue;
@@ -208,8 +212,20 @@ function closestMeaningfulContainer(element) {
 function looksLikeTask(text) {
   if (text.length < 3 || text.length > 700) return false;
   const hasTaskWord = TASK_KEYWORDS.some((keyword) => text.includes(keyword));
-  const hasActionableState = /(未完成|待完成|未提交|提交|截止|剩余|开始|进行中)/.test(text);
+  const hasActionableState = /(未完成|待完成|未提交|提交|截止|截至|截止时间|剩余|开始|进行中|待互评)/.test(text);
   return hasTaskWord && hasActionableState;
+}
+
+function isAccurateTaskCandidate(text, title, dueAt, status) {
+  if (!title || title.length < 2 || title.length > 80) return false;
+  if (/课程介绍|课程大纲|评分标准|公告|通知|老师|讲师|证书/.test(title)) return false;
+  if (/已完成|已提交|已评分/.test(text) && !/未完成|未提交|待完成|待互评/.test(text)) return false;
+
+  const hasSpecificTaskWord = /(作业|互评|测验|测试|考试|讨论|问卷)/.test(text);
+  const hasPendingState = /(未完成|待完成|未提交|待提交|待互评|进行中)/.test(text);
+  const hasDueSignal = Boolean(dueAt) || /(截止|截至|截止时间|剩余\d+|剩余 \d+)/.test(text);
+
+  return hasSpecificTaskWord && (hasPendingState || hasDueSignal || status === "overdue");
 }
 
 function extractTitle(container, text) {
@@ -249,23 +265,41 @@ function extractCourseName(root = document) {
 function extractDueAt(text) {
   const now = new Date();
   const patterns = [
-    /(?:截止|截至|结束|提交截止|截止时间)[:：\s]*(\d{4})[年/-](\d{1,2})[月/-](\d{1,2})日?\s*(\d{1,2})?[:：点]?(\d{1,2})?/,
-    /(?:截止|截至|结束|提交截止|截止时间)[:：\s]*(\d{1,2})[月/-](\d{1,2})日?\s*(\d{1,2})?[:：点]?(\d{1,2})?/,
-    /(\d{4})[年/-](\d{1,2})[月/-](\d{1,2})日?\s*(\d{1,2})?[:：点]?(\d{1,2})?/,
-    /(\d{1,2})[月/-](\d{1,2})日?\s*(\d{1,2})?[:：点]?(\d{1,2})?/
+    {
+      kind: "year",
+      regex: /(?:截止|截至|结束|提交截止|截止时间)[:：\s]*(\d{4})[年/-](\d{1,2})[月/-](\d{1,2})日?\s*(\d{1,2})?[:：点]?(\d{1,2})?/
+    },
+    {
+      kind: "month",
+      regex: /(?:截止|截至|结束|提交截止|截止时间)[:：\s]*(\d{1,2})[月/-](\d{1,2})日?\s*(\d{1,2})?[:：点]?(\d{1,2})?/
+    },
+    {
+      kind: "day",
+      regex: /(?:截止|截至|结束|提交截止|截止时间)[:：\s]*(\d{1,2})日\s*(\d{1,2})?[:：点]?(\d{1,2})?/
+    },
+    {
+      kind: "year",
+      regex: /(\d{4})[年/-](\d{1,2})[月/-](\d{1,2})日?\s*(\d{1,2})?[:：点]?(\d{1,2})?/
+    },
+    {
+      kind: "month",
+      regex: /(\d{1,2})[月/-](\d{1,2})日?\s*(\d{1,2})?[:：点]?(\d{1,2})?/
+    }
   ];
 
   for (const pattern of patterns) {
-    const match = text.match(pattern);
+    const match = text.match(pattern.regex);
     if (!match) continue;
 
-    const hasYear = match[1]?.length === 4;
-    const year = hasYear ? Number(match[1]) : now.getFullYear();
-    const month = Number(hasYear ? match[2] : match[1]);
-    const day = Number(hasYear ? match[3] : match[2]);
-    const hour = Number(hasYear ? match[4] || 23 : match[3] || 23);
-    const minute = Number(hasYear ? match[5] || 59 : match[4] || 59);
+    const year = pattern.kind === "year" ? Number(match[1]) : now.getFullYear();
+    const month = pattern.kind === "day" ? now.getMonth() + 1 : Number(pattern.kind === "year" ? match[2] : match[1]);
+    const day = pattern.kind === "day" ? Number(match[1]) : Number(pattern.kind === "year" ? match[3] : match[2]);
+    const hour = Number(pattern.kind === "day" ? match[2] || 23 : pattern.kind === "year" ? match[4] || 23 : match[3] || 23);
+    const minute = Number(pattern.kind === "day" ? match[3] || 59 : pattern.kind === "year" ? match[5] || 59 : match[4] || 59);
     const parsed = new Date(year, month - 1, day, hour, minute, 0, 0);
+    if (pattern.kind !== "year" && parsed.getTime() < now.getTime() - DAY_MS) {
+      parsed.setFullYear(parsed.getFullYear() + 1);
+    }
 
     if (!Number.isNaN(parsed.getTime())) {
       return parsed.getTime();
@@ -280,6 +314,18 @@ function getStatus(text) {
   if (/已截止|已结束|过期/.test(text)) return "overdue";
   if (/未完成|未提交|待完成|进行中|提交/.test(text)) return "todo";
   return "unknown";
+}
+
+function getPriority(dueAt, status) {
+  if (status === "overdue") return "overdue";
+  if (!dueAt) return "month";
+
+  const diff = dueAt - Date.now();
+  if (diff < 0) return "overdue";
+  if (diff <= DAY_MS) return "day";
+  if (diff <= 7 * DAY_MS) return "week";
+  if (diff <= 30 * DAY_MS) return "month";
+  return "later";
 }
 
 function inferTaskType(text) {

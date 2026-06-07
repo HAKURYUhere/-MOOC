@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "中国大学 MOOC 待办提醒",
   "description": "汇总中国大学 MOOC 页面中的作业、测验、考试、讨论等待完成任务，并在截止前提醒。",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "action": {
     "default_title": "MOOC 待办提醒",
     "default_popup": "popup.html",

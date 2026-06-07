@@ -6,7 +6,7 @@ const openOptions = document.querySelector("#openOptions");
 const clearDone = document.querySelector("#clearDone");
 const tabs = document.querySelectorAll(".tab");
 
-let currentFilter = "active";
+let currentFilter = "day";
 let cachedTasks = [];
 
 document.addEventListener("DOMContentLoaded", render);
@@ -32,10 +32,12 @@ function renderTasks(tasks) {
   taskList.innerHTML = "";
 
   const activeTasks = tasks.filter((task) => !task.done);
-  const soonTasks = activeTasks.filter((task) => task.dueAt && task.dueAt - Date.now() <= 24 * 60 * 60 * 1000);
+  const dayTasks = activeTasks.filter((task) => getPriority(task) === "day" || getPriority(task) === "overdue");
+  const weekTasks = activeTasks.filter((task) => ["day", "week", "overdue"].includes(getPriority(task)));
+  const monthTasks = activeTasks.filter((task) => ["day", "week", "month", "overdue"].includes(getPriority(task)));
   const filtered = filterTasks(tasks);
 
-  summary.textContent = `${activeTasks.length} 个待完成，${soonTasks.length} 个 24 小时内截止`;
+  summary.textContent = `${activeTasks.length} 个待完成｜1天 ${dayTasks.length}｜1周 ${weekTasks.length}｜1月 ${monthTasks.length}`;
 
   if (filtered.length === 0) {
     taskList.innerHTML = `<div class="empty">没有匹配的任务。登录后打开中国大学 MOOC 首页或“我的课程”页，再点右上角刷新试试。</div>`;
@@ -54,9 +56,10 @@ function renderTasks(tasks) {
 
     article.classList.toggle("done", task.done);
     article.classList.toggle("overdue", task.dueAt && task.dueAt < Date.now() && !task.done);
+    article.dataset.priority = getPriority(task);
     title.textContent = task.title;
     course.textContent = task.course || "中国大学 MOOC";
-    pill.textContent = task.type || "任务";
+    pill.textContent = `${priorityLabel(task)} · ${task.type || "任务"}`;
     due.textContent = formatDue(task);
     openButton.addEventListener("click", () => openTask(task));
     doneButton.textContent = task.done ? "恢复" : "完成";
@@ -69,12 +72,16 @@ function renderTasks(tasks) {
 function filterTasks(tasks) {
   const sorted = [...tasks].sort((a, b) => (a.dueAt || Number.MAX_SAFE_INTEGER) - (b.dueAt || Number.MAX_SAFE_INTEGER));
 
-  if (currentFilter === "active") {
-    return sorted.filter((task) => !task.done);
+  if (currentFilter === "day") {
+    return sorted.filter((task) => !task.done && ["day", "overdue"].includes(getPriority(task)));
   }
 
-  if (currentFilter === "soon") {
-    return sorted.filter((task) => !task.done && task.dueAt && task.dueAt - Date.now() <= 24 * 60 * 60 * 1000);
+  if (currentFilter === "week") {
+    return sorted.filter((task) => !task.done && ["day", "week", "overdue"].includes(getPriority(task)));
+  }
+
+  if (currentFilter === "month") {
+    return sorted.filter((task) => !task.done && ["day", "week", "month", "overdue"].includes(getPriority(task)));
   }
 
   return sorted;
@@ -118,6 +125,27 @@ function formatDue(task) {
   if (diff < 60 * 60 * 1000) return "1 小时内截止";
   if (diff < 24 * 60 * 60 * 1000) return `${Math.ceil(diff / 60 / 60 / 1000)} 小时内截止`;
   return `截止 ${formatDateTime(task.dueAt)}`;
+}
+
+function getPriority(task) {
+  if (task.priority) return task.priority;
+  if (!task.dueAt) return "month";
+
+  const diff = task.dueAt - Date.now();
+  if (diff < 0) return "overdue";
+  if (diff <= 24 * 60 * 60 * 1000) return "day";
+  if (diff <= 7 * 24 * 60 * 60 * 1000) return "week";
+  if (diff <= 30 * 24 * 60 * 60 * 1000) return "month";
+  return "later";
+}
+
+function priorityLabel(task) {
+  const priority = getPriority(task);
+  if (priority === "overdue") return "已截止";
+  if (priority === "day") return "1天";
+  if (priority === "week") return "1周";
+  if (priority === "month") return "1月";
+  return "较远";
 }
 
 function formatDateTime(timestamp) {
