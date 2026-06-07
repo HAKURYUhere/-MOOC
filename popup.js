@@ -32,12 +32,13 @@ function renderTasks(tasks) {
   taskList.innerHTML = "";
 
   const activeTasks = tasks.filter((task) => !task.done);
-  const dayTasks = activeTasks.filter((task) => getPriority(task) === "day" || getPriority(task) === "overdue");
-  const weekTasks = activeTasks.filter((task) => ["day", "week", "overdue"].includes(getPriority(task)));
-  const monthTasks = activeTasks.filter((task) => ["day", "week", "month", "overdue"].includes(getPriority(task)));
+  const displayableTasks = activeTasks.filter(isDisplayableTask);
+  const dayTasks = displayableTasks.filter((task) => getPriority(task) === "day" || getPriority(task) === "overdue");
+  const weekTasks = displayableTasks.filter((task) => ["day", "week", "overdue"].includes(getPriority(task)));
+  const monthTasks = displayableTasks.filter((task) => ["day", "week", "month", "overdue"].includes(getPriority(task)));
   const filtered = filterTasks(tasks);
 
-  summary.textContent = `${activeTasks.length} 个待完成｜1天 ${dayTasks.length}｜1周 ${weekTasks.length}｜1月 ${monthTasks.length}`;
+  summary.textContent = `${displayableTasks.length} 个待完成｜1天 ${dayTasks.length}｜1周 ${weekTasks.length}｜1月 ${monthTasks.length}`;
 
   if (filtered.length === 0) {
     taskList.innerHTML = `<div class="empty">没有匹配的任务。登录后打开中国大学 MOOC 首页或“我的课程”页，再点右上角刷新试试。</div>`;
@@ -70,7 +71,9 @@ function renderTasks(tasks) {
 }
 
 function filterTasks(tasks) {
-  const sorted = [...tasks].sort((a, b) => (a.dueAt || Number.MAX_SAFE_INTEGER) - (b.dueAt || Number.MAX_SAFE_INTEGER));
+  const sorted = tasks
+    .filter(isDisplayableTask)
+    .sort((a, b) => (a.dueAt || Number.MAX_SAFE_INTEGER) - (b.dueAt || Number.MAX_SAFE_INTEGER));
 
   if (currentFilter === "day") {
     return sorted.filter((task) => !task.done && ["day", "overdue"].includes(getPriority(task)));
@@ -129,7 +132,7 @@ function formatDue(task) {
 
 function getPriority(task) {
   if (task.priority) return task.priority;
-  if (!task.dueAt) return "month";
+  if (!task.dueAt) return "unknown";
 
   const diff = task.dueAt - Date.now();
   if (diff < 0) return "overdue";
@@ -146,6 +149,23 @@ function priorityLabel(task) {
   if (priority === "week") return "1周";
   if (priority === "month") return "1月";
   return "较远";
+}
+
+function isDisplayableTask(task) {
+  if (!task?.title || task.done) return false;
+  if (!isValidTaskTitle(task.title)) return false;
+  if (/(已结课|课程已结束|已结束课程|课程结束|已关闭|已归档)/.test(`${task.course || ""} ${task.capturedText || ""}`)) return false;
+  return Boolean(task.dueAt);
+}
+
+function isValidTaskTitle(title) {
+  const normalized = String(title || "").replace(/\s+/g, " ").trim();
+  if (!normalized || normalized.length < 2 || normalized.length > 80) return false;
+  if (/^(id|courseStyle|style|type|name|title|content|chapterId|lessonId)\b/i.test(normalized)) return false;
+  if (/\b(courseStyle|chapterId|lessonId|contentId|categoryId|termId)\b/i.test(normalized)) return false;
+  if (/^[\w-]+\s*[:：]/.test(normalized) && !/(作业|互评|测验|测试|考试|讨论|问卷)/.test(normalized)) return false;
+  if (/^[\d\s()[\]（）-]+$/.test(normalized)) return false;
+  return true;
 }
 
 function formatDateTime(timestamp) {

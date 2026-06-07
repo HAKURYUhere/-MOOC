@@ -52,7 +52,7 @@ async function saveTasks(incomingTasks, tab) {
   const byKey = new Map(tasks.map((task) => [task.id, task]));
 
   for (const task of incomingTasks || []) {
-    if (!task?.title) continue;
+    if (!isValidStoredTask(task)) continue;
 
     const enriched = {
       ...task,
@@ -66,11 +66,26 @@ async function saveTasks(incomingTasks, tab) {
   }
 
   const nextTasks = Array.from(byKey.values())
+    .filter(isValidStoredTask)
     .filter((task) => !task.lastSeenAt || now - task.lastSeenAt < 1000 * 60 * 60 * 24 * 30)
     .sort((a, b) => (a.dueAt || Number.MAX_SAFE_INTEGER) - (b.dueAt || Number.MAX_SAFE_INTEGER));
 
   await chrome.storage.local.set({ tasks: nextTasks });
   await notifyDueTasks();
+}
+
+function isValidStoredTask(task) {
+  if (!task?.title || task.done) return Boolean(task?.title);
+  if (!task.dueAt) return false;
+
+  const title = String(task.title || "").replace(/\s+/g, " ").trim();
+  if (!title || title.length < 2 || title.length > 80) return false;
+  if (/^(id|courseStyle|style|type|name|title|content|chapterId|lessonId)\b/i.test(title)) return false;
+  if (/\b(courseStyle|chapterId|lessonId|contentId|categoryId|termId)\b/i.test(title)) return false;
+  if (/^[\w-]+\s*[:：]/.test(title) && !/(作业|互评|测验|测试|考试|讨论|问卷)/.test(title)) return false;
+  if (/^[\d\s()[\]（）-]+$/.test(title)) return false;
+  if (/(已结课|课程已结束|已结束课程|课程结束|已关闭|已归档)/.test(`${task.course || ""} ${task.capturedText || ""}`)) return false;
+  return true;
 }
 
 async function notifyDueTasks() {

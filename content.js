@@ -22,6 +22,7 @@ const DONE_KEYWORDS = ["已完成", "已提交", "已交", "完成学习", "得�
 const MAX_TEXT_LENGTH = 180;
 const MAX_LINKED_COURSES = 20;
 const DAY_MS = 24 * 60 * 60 * 1000;
+const MAX_FUTURE_MS = 370 * DAY_MS;
 
 let scanTimer = null;
 
@@ -66,6 +67,8 @@ async function collectTasks() {
 }
 
 function collectTasksFromRoot(root, baseUrl, fallbackCourse) {
+  if (isEndedCoursePage(root)) return [];
+
   const candidates = new Map();
   collectElementTasks(root, baseUrl, fallbackCourse, candidates, true);
   collectScriptTasks(root, baseUrl, fallbackCourse, candidates);
@@ -103,6 +106,7 @@ function collectElementTasks(root, baseUrl, fallbackCourse, candidates, strictMo
 
     const container = closestMeaningfulContainer(element);
     const text = normalizeText(container.innerText || element.innerText || element.textContent || "");
+    if (isEndedCourseText(text)) continue;
     if (!looksLikeTask(text)) continue;
 
     const title = extractTitle(container, text);
@@ -150,16 +154,20 @@ function collectScriptTasks(root, baseUrl, fallbackCourse, candidates) {
 function extractTasksFromSerializedText(text, baseUrl, fallbackCourse) {
   const tasks = [];
   const normalized = decodeSerializedText(text).replace(/\\\//g, "/");
-  const chunks = normalized.match(/.{0,120}(?:作业|互评|测验|测试|考试|讨论|问卷|homework|quiz|exam|assignment).{0,220}/gi) || [];
+  const chunks = normalized.match(/.{0,120}(?:作业|互评|测验|测试|考试|讨论|问卷|homework|quiz|exam|assignment).{0,260}/gi) || [];
 
   for (const chunk of chunks.slice(0, 80)) {
+    if (isEndedCourseText(chunk)) continue;
+
     const cleanChunk = normalizeText(chunk.replace(/[{}[\]",]/g, " "));
     const dueAt = extractDueAt(cleanChunk) || extractTimestampDeadline(chunk);
+    if (!dueAt) continue;
+
     const status = getStatus(cleanChunk);
     if (!isAccurateTaskCandidate(cleanChunk, cleanChunk, dueAt, status, false, null)) continue;
 
-    const title = extractSerializedTitle(cleanChunk);
-    if (!title) continue;
+    const title = extractSerializedTitle(chunk);
+    if (!isValidTaskTitle(title)) continue;
 
     const urlMatch = chunk.match(/https?:\/\/[^"'\\\s]+|\/(?:learn|course|spoc|term)\/[^"'\\\s]+/i);
     const pageUrl = urlMatch ? new URL(urlMatch[0], baseUrl).href : baseUrl;
@@ -195,6 +203,8 @@ async function collectTasksFromLinkedCourses() {
     if (!html) continue;
 
     const page = new DOMParser().parseFromString(html, "text/html");
+    if (isEndedCoursePage(page)) continue;
+
     const courseName = extractCourseName(page) || course.title;
     allTasks.push(...collectTasksFromRoot(page, course.url, courseName));
 
@@ -222,6 +232,9 @@ function findCourseLinks() {
     if (!isMoocUrl(url) || !looksLikeCourseUrl(url.href)) continue;
 
     const container = anchor.closest("li, [class*='course'], [class*='card'], [class*='item']") || anchor;
+    const containerText = normalizeText(container.innerText || container.textContent || "");
+    if (isEndedCourseText(containerText)) continue;
+
     const title = normalizeText(
       anchor.getAttribute("title") ||
         container.querySelector("[title]")?.getAttribute("title") ||
@@ -288,7 +301,7 @@ function looksLikeTask(text) {
 }
 
 function isAccurateTaskCandidate(text, title, dueAt, status, strictMode, container) {
-  if (!title || title.length < 2 || title.length > 80) return false;
+  if (!isValidTaskTitle(title)) return false;
   if (/课程介绍|课程大纲|评分标准|公告|通知|老师|讲师|证书/.test(title)) return false;
   if (/已完成|已提交|已评分|已批改/.test(text) && !/未完成|未提交|未交|待提交|待完成|待互评/.test(text)) return false;
 
@@ -302,7 +315,7 @@ function isAccurateTaskCandidate(text, title, dueAt, status, strictMode, contain
     return hasSpecificTaskWord && (hasPendingState || hasDueSignal || status === "overdue");
   }
 
-  return hasSpecificTaskWord && (hasPendingState || hasDueSignal || hasTaskUrl || status === "unknown");
+  return hasSpecificTaskWord && (hasPendingState || hasDueSignal || hasTaskUrl);
 }
 
 function extractTitle(container, text) {
@@ -315,7 +328,7 @@ function extractTitle(container, text) {
 
   return normalizeText(raw)
     .replace(/^(作业|测验|考试|讨论|问卷)[:：\s]*/, "")
-    .split(/截止|状态|未提交|待完成|已提交|已完成|进入|查看/)[0]
+    .split(/截止|截至|截止时间|状态|未提交|未交|待提交|待完成|已提交|已完成|进入|查看/)[0]
     .slice(0, 80)
     .trim();
 }
@@ -346,6 +359,10 @@ function extractDueAt(text) {
   const patterns = [
     {
       kind: "year",
+      regex: /(?:截止|截至|结束|提交截止|截止时间)[:：\s]*(\d{4})[./-](\d{1,2})[./-](\d{1,2})\s*(\d{1,2})?[:：](\d{1,2})(?::\d{1,2})?/
+    },
+    {
+      kind: "year",
       regex: /(?:截止|截至|结束|提交截止|截止时间)[:：\s]*(\d{4})[年/-](\d{1,2})[月/-](\d{1,2})日?\s*(\d{1,2})?[:：点]?(\d{1,2})?/
     },
     {
@@ -358,7 +375,7 @@ function extractDueAt(text) {
     },
     {
       kind: "year",
-      regex: /(\d{4})[年/-](\d{1,2})[月/-](\d{1,2})日?\s*(\d{1,2})?[:：点]?(\d{1,2})?/
+      regex: /(\d{4})[年./-](\d{1,2})[月./-](\d{1,2})日?\s*(\d{1,2})?[:：点]?(\d{1,2})?/
     },
     {
       kind: "month",
@@ -375,12 +392,16 @@ function extractDueAt(text) {
     const day = pattern.kind === "day" ? Number(match[1]) : Number(pattern.kind === "year" ? match[3] : match[2]);
     const hour = Number(pattern.kind === "day" ? match[2] || 23 : pattern.kind === "year" ? match[4] || 23 : match[3] || 23);
     const minute = Number(pattern.kind === "day" ? match[3] || 59 : pattern.kind === "year" ? match[5] || 59 : match[4] || 59);
+    if (!isDatePartValid(year, month, day, hour, minute)) continue;
+
     const parsed = new Date(year, month - 1, day, hour, minute, 0, 0);
+    if (parsed.getFullYear() !== year || parsed.getMonth() !== month - 1 || parsed.getDate() !== day) continue;
+
     if (pattern.kind !== "year" && parsed.getTime() < now.getTime() - DAY_MS) {
       parsed.setFullYear(parsed.getFullYear() + 1);
     }
 
-    if (!Number.isNaN(parsed.getTime())) {
+    if (!Number.isNaN(parsed.getTime()) && parsed.getTime() < now.getTime() + MAX_FUTURE_MS) {
       return parsed.getTime();
     }
   }
@@ -397,7 +418,7 @@ function getStatus(text) {
 
 function getPriority(dueAt, status) {
   if (status === "overdue") return "overdue";
-  if (!dueAt) return "month";
+  if (!dueAt) return "unknown";
 
   const diff = dueAt - Date.now();
   if (diff < 0) return "overdue";
@@ -460,12 +481,47 @@ function extractTimestampDeadline(text) {
 }
 
 function extractSerializedTitle(text) {
-  const explicit = text.match(/(?:title|name|homeworkName|quizName|examName|assignmentName)\s*[:：]\s*([^:：]{2,80})/i);
-  const raw = explicit?.[1] || text;
+  const decoded = decodeSerializedText(text).replace(/\\"/g, '"');
+  const explicit = decoded.match(/["'](?:title|name|homeworkName|quizName|examName|assignmentName|testName)["']\s*:\s*["']([^"']{2,80})["']/i);
+  const raw = explicit?.[1] || "";
   return normalizeText(raw)
     .split(/截止|截至|截止时间|未提交|未交|待提交|待完成|已提交|已完成|进入|查看|deadline|endTime/i)[0]
     .slice(0, 80)
     .trim();
+}
+
+function isValidTaskTitle(title) {
+  const normalized = normalizeText(title);
+  if (!normalized || normalized.length < 2 || normalized.length > 80) return false;
+  if (/^(id|courseStyle|style|type|name|title|content|chapterId|lessonId)\b/i.test(normalized)) return false;
+  if (/\b(courseStyle|chapterId|lessonId|contentId|categoryId|termId)\b/i.test(normalized)) return false;
+  if (/^[\w-]+\s*[:：]/.test(normalized) && !/(作业|互评|测验|测试|考试|讨论|问卷)/.test(normalized)) return false;
+  if (/^[\d\s()[\]（）-]+$/.test(normalized)) return false;
+  return true;
+}
+
+function isDatePartValid(year, month, day, hour, minute) {
+  return (
+    year >= 2020 &&
+    year <= 2100 &&
+    month >= 1 &&
+    month <= 12 &&
+    day >= 1 &&
+    day <= 31 &&
+    hour >= 0 &&
+    hour <= 23 &&
+    minute >= 0 &&
+    minute <= 59
+  );
+}
+
+function isEndedCoursePage(root) {
+  const bodyText = normalizeText(root.body?.innerText || root.body?.textContent || "");
+  return isEndedCourseText(bodyText) && !/(未完成|未提交|未交|待提交|待互评|待完成)/.test(bodyText);
+}
+
+function isEndedCourseText(text) {
+  return /(已结课|课程已结束|已结束课程|课程结束|已关闭|已归档)/.test(text);
 }
 
 function normalizeText(text) {
