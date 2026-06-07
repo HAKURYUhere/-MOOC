@@ -59,7 +59,7 @@ function renderTasks(tasks) {
     article.dataset.priority = getPriority(task);
     title.textContent = task.title;
     course.textContent = task.course || "中国大学 MOOC";
-    pill.textContent = `${priorityLabel(task)} · ${task.type || "任务"}`;
+    pill.textContent = `${priorityLabel(task)} · ${task.type || "任务"}${task.confidence === "medium" ? " · 待核对" : ""}`;
     due.textContent = formatDue(task);
     openButton.addEventListener("click", () => openTask(task));
     doneButton.textContent = task.done ? "恢复" : "完成";

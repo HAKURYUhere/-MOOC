@@ -8,12 +8,17 @@ const TASK_KEYWORDS = [
   "问卷",
   "提交",
   "未提交",
+  "未交",
+  "待提交",
+  "待互评",
   "待完成",
   "未完成",
-  "截止"
+  "截止",
+  "截至",
+  "截止时间"
 ];
 
-const DONE_KEYWORDS = ["已完成", "已提交", "已交", "完成学习", "得分", "已评分"];
+const DONE_KEYWORDS = ["已完成", "已提交", "已交", "完成学习", "得分", "已评分", "已批改"];
 const MAX_TEXT_LENGTH = 180;
 const MAX_LINKED_COURSES = 20;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -62,13 +67,31 @@ async function collectTasks() {
 
 function collectTasksFromRoot(root, baseUrl, fallbackCourse) {
   const candidates = new Map();
+  collectElementTasks(root, baseUrl, fallbackCourse, candidates, true);
+  collectScriptTasks(root, baseUrl, fallbackCourse, candidates);
+
+  if (candidates.size === 0) {
+    collectElementTasks(root, baseUrl, fallbackCourse, candidates, false);
+  }
+
+  return Array.from(candidates.values())
+    .filter((task) => task.status !== "done" || task.dueAt)
+    .slice(0, 80);
+}
+
+function collectElementTasks(root, baseUrl, fallbackCourse, candidates, strictMode) {
   const selectors = [
     "a",
     "li",
+    "tr",
+    "button",
     "[class*='homework']",
+    "[class*='work']",
     "[class*='quiz']",
+    "[class*='test']",
     "[class*='exam']",
     "[class*='task']",
+    "[class*='todo']",
     "[class*='assignment']",
     "[class*='j-task']",
     "[data-name]",
@@ -87,7 +110,7 @@ function collectTasksFromRoot(root, baseUrl, fallbackCourse) {
 
     const dueAt = extractDueAt(text);
     const status = getStatus(text);
-    if (!isAccurateTaskCandidate(text, title, dueAt, status)) continue;
+    if (!isAccurateTaskCandidate(text, title, dueAt, status, strictMode, container)) continue;
 
     const link = container.querySelector("a[href]") || element.closest("a[href]") || element.querySelector?.("a[href]");
     const pageUrl = link ? new URL(link.getAttribute("href"), baseUrl).href : baseUrl;
@@ -103,15 +126,63 @@ function collectTasksFromRoot(root, baseUrl, fallbackCourse) {
       done: status === "done",
       dueAt,
       priority: getPriority(dueAt, status),
+      confidence: strictMode ? "high" : "medium",
       pageUrl,
       capturedText: text.slice(0, MAX_TEXT_LENGTH),
       foundAt: Date.now()
     });
   }
+}
 
-  return Array.from(candidates.values())
-    .filter((task) => task.status !== "done" || task.dueAt)
-    .slice(0, 80);
+function collectScriptTasks(root, baseUrl, fallbackCourse, candidates) {
+  for (const script of root.querySelectorAll("script")) {
+    const text = script.textContent || "";
+    if (!/(作业|互评|测验|测试|考试|讨论|问卷|homework|quiz|exam|assignment|deadline|endTime|closeTime)/i.test(text)) {
+      continue;
+    }
+
+    for (const task of extractTasksFromSerializedText(text, baseUrl, fallbackCourse)) {
+      candidates.set(task.id, task);
+    }
+  }
+}
+
+function extractTasksFromSerializedText(text, baseUrl, fallbackCourse) {
+  const tasks = [];
+  const normalized = decodeSerializedText(text).replace(/\\\//g, "/");
+  const chunks = normalized.match(/.{0,120}(?:作业|互评|测验|测试|考试|讨论|问卷|homework|quiz|exam|assignment).{0,220}/gi) || [];
+
+  for (const chunk of chunks.slice(0, 80)) {
+    const cleanChunk = normalizeText(chunk.replace(/[{}[\]",]/g, " "));
+    const dueAt = extractDueAt(cleanChunk) || extractTimestampDeadline(chunk);
+    const status = getStatus(cleanChunk);
+    if (!isAccurateTaskCandidate(cleanChunk, cleanChunk, dueAt, status, false, null)) continue;
+
+    const title = extractSerializedTitle(cleanChunk);
+    if (!title) continue;
+
+    const urlMatch = chunk.match(/https?:\/\/[^"'\\\s]+|\/(?:learn|course|spoc|term)\/[^"'\\\s]+/i);
+    const pageUrl = urlMatch ? new URL(urlMatch[0], baseUrl).href : baseUrl;
+    const course = fallbackCourse || "中国大学 MOOC";
+    const id = makeTaskId(title, course, dueAt, pageUrl);
+
+    tasks.push({
+      id,
+      title,
+      course,
+      type: inferTaskType(cleanChunk),
+      status,
+      done: status === "done",
+      dueAt,
+      priority: getPriority(dueAt, status),
+      confidence: "medium",
+      pageUrl,
+      capturedText: cleanChunk.slice(0, MAX_TEXT_LENGTH),
+      foundAt: Date.now()
+    });
+  }
+
+  return tasks;
 }
 
 async function collectTasksFromLinkedCourses() {
@@ -212,26 +283,34 @@ function closestMeaningfulContainer(element) {
 function looksLikeTask(text) {
   if (text.length < 3 || text.length > 700) return false;
   const hasTaskWord = TASK_KEYWORDS.some((keyword) => text.includes(keyword));
-  const hasActionableState = /(未完成|待完成|未提交|提交|截止|截至|截止时间|剩余|开始|进行中|待互评)/.test(text);
+  const hasActionableState = /(未完成|待完成|未提交|未交|待提交|提交|截止|截至|截止时间|即将截止|剩余|开始|进行中|待互评|开放)/.test(text);
   return hasTaskWord && hasActionableState;
 }
 
-function isAccurateTaskCandidate(text, title, dueAt, status) {
+function isAccurateTaskCandidate(text, title, dueAt, status, strictMode, container) {
   if (!title || title.length < 2 || title.length > 80) return false;
   if (/课程介绍|课程大纲|评分标准|公告|通知|老师|讲师|证书/.test(title)) return false;
-  if (/已完成|已提交|已评分/.test(text) && !/未完成|未提交|待完成|待互评/.test(text)) return false;
+  if (/已完成|已提交|已评分|已批改/.test(text) && !/未完成|未提交|未交|待提交|待完成|待互评/.test(text)) return false;
 
   const hasSpecificTaskWord = /(作业|互评|测验|测试|考试|讨论|问卷)/.test(text);
-  const hasPendingState = /(未完成|待完成|未提交|待提交|待互评|进行中)/.test(text);
-  const hasDueSignal = Boolean(dueAt) || /(截止|截至|截止时间|剩余\d+|剩余 \d+)/.test(text);
+  const hasPendingState = /(未完成|待完成|未提交|未交|待提交|待互评|进行中|未开始)/.test(text);
+  const hasDueSignal = Boolean(dueAt) || /(截止|截至|截止时间|即将截止|剩余\s*\d+)/.test(text);
+  const href = container?.querySelector?.("a[href]")?.getAttribute("href") || container?.closest?.("a[href]")?.getAttribute("href") || "";
+  const hasTaskUrl = /(homework|quiz|exam|test|forum|hw|task|work)/i.test(href);
 
-  return hasSpecificTaskWord && (hasPendingState || hasDueSignal || status === "overdue");
+  if (strictMode) {
+    return hasSpecificTaskWord && (hasPendingState || hasDueSignal || status === "overdue");
+  }
+
+  return hasSpecificTaskWord && (hasPendingState || hasDueSignal || hasTaskUrl || status === "unknown");
 }
 
 function extractTitle(container, text) {
   const titleAttr = container.getAttribute("title") || container.querySelector("[title]")?.getAttribute("title");
-  const heading = container.querySelector("h1,h2,h3,h4,[class*='title'],[class*='name']")?.innerText;
-  const linkText = container.querySelector("a")?.innerText;
+  const headingElement = container.querySelector("h1,h2,h3,h4,[class*='title'],[class*='name']");
+  const heading = headingElement?.innerText || headingElement?.textContent;
+  const link = container.querySelector("a");
+  const linkText = link?.innerText || link?.textContent;
   const raw = titleAttr || heading || linkText || text;
 
   return normalizeText(raw)
@@ -312,7 +391,7 @@ function extractDueAt(text) {
 function getStatus(text) {
   if (DONE_KEYWORDS.some((keyword) => text.includes(keyword))) return "done";
   if (/已截止|已结束|过期/.test(text)) return "overdue";
-  if (/未完成|未提交|待完成|进行中|提交/.test(text)) return "todo";
+  if (/未完成|未提交|未交|待提交|待完成|待互评|进行中|提交/.test(text)) return "todo";
   return "unknown";
 }
 
@@ -365,6 +444,28 @@ function simpleHash(input) {
     hash |= 0;
   }
   return `task-${Math.abs(hash)}`;
+}
+
+function decodeSerializedText(text) {
+  return text.replace(/\\u([0-9a-fA-F]{4})/g, (_match, code) => String.fromCharCode(parseInt(code, 16)));
+}
+
+function extractTimestampDeadline(text) {
+  const match = text.match(/(?:deadline|endTime|closeTime|dueTime|endDate|截止时间)["':\s]*(\d{10,13})/i);
+  if (!match) return null;
+
+  const value = Number(match[1]);
+  if (!Number.isFinite(value)) return null;
+  return value < 100000000000 ? value * 1000 : value;
+}
+
+function extractSerializedTitle(text) {
+  const explicit = text.match(/(?:title|name|homeworkName|quizName|examName|assignmentName)\s*[:：]\s*([^:：]{2,80})/i);
+  const raw = explicit?.[1] || text;
+  return normalizeText(raw)
+    .split(/截止|截至|截止时间|未提交|未交|待提交|待完成|已提交|已完成|进入|查看|deadline|endTime/i)[0]
+    .slice(0, 80)
+    .trim();
 }
 
 function normalizeText(text) {
